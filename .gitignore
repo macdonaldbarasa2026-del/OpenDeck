@@ -1,0 +1,8 @@
+reference/
+.gradle/
+build/
+**/build/
+local.properties
+*.apk
+*.xapk
+*.zip
