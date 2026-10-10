@@ -43,9 +43,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
-                MixfiaLibrary()
-            }
+            MixfiaApp()
         }
     }
 }
@@ -105,7 +103,7 @@ private fun formatDuration(milliseconds: Long): String {
 }
 
 @Composable
-private fun MixfiaLibrary() {
+internal fun MixfiaLibrary(rescanToken: Int = 0) {
     val context = LocalContext.current
     var permissionGranted by remember { mutableStateOf(hasAudioPermission(context)) }
     var tracks by remember { mutableStateOf(emptyList<AudioTrack>()) }
@@ -126,7 +124,7 @@ private fun MixfiaLibrary() {
         permissionGranted = granted
     }
 
-    LaunchedEffect(permissionGranted) {
+    LaunchedEffect(permissionGranted, rescanToken) {
         if (permissionGranted) {
             tracks = withContext(Dispatchers.IO) { scanMusic(context) }
         }
