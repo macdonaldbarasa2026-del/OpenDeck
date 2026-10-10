@@ -1,8 +1,11 @@
 package com.mixfia
 
 import android.Manifest
+import android.content.ContentUris
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -11,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,6 +28,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 private data class AudioTrack(
     val id: Long,
@@ -103,16 +110,99 @@ private fun MixfiaLibrary() {
     var permissionGranted by remember { mutableStateOf(hasAudioPermission(context)) }
     var tracks by remember { mutableStateOf(emptyList<AudioTrack>()) }
     var search by remember { mutableStateOf("") }
+    var selectedTrack by remember { mutableStateOf<AudioTrack?>(null) }
+    var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    var isPrepared by remember { mutableStateOf(false) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var isSeeking by remember { mutableStateOf(false) }
+    var playbackPosition by remember { mutableStateOf(0L) }
+    var playbackDuration by remember { mutableStateOf(0L) }
+    var playbackError by remember { mutableStateOf<String?>(null) }
+    val latestTracks by rememberUpdatedState(tracks)
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         permissionGranted = granted
-        if (granted) tracks = scanMusic(context)
     }
 
     LaunchedEffect(permissionGranted) {
-        if (permissionGranted) tracks = scanMusic(context)
+        if (permissionGranted) {
+            tracks = withContext(Dispatchers.IO) { scanMusic(context) }
+        }
+    }
+
+    DisposableEffect(selectedTrack?.id) {
+        val track = selectedTrack
+        if (track == null) {
+            player = null
+            isPrepared = false
+            onDispose { }
+        } else {
+            val mediaPlayer = MediaPlayer()
+            player = mediaPlayer
+            isPrepared = false
+            isPlaying = false
+            playbackPosition = 0L
+            playbackDuration = track.duration
+            playbackError = null
+
+            try {
+                mediaPlayer.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                mediaPlayer.setDataSource(
+                    context,
+                    ContentUris.withAppendedId(
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                        track.id
+                    )
+                )
+                mediaPlayer.setOnPreparedListener { preparedPlayer ->
+                    isPrepared = true
+                    playbackDuration = preparedPlayer.duration.toLong()
+                    preparedPlayer.start()
+                    isPlaying = true
+                }
+                mediaPlayer.setOnCompletionListener {
+                    val playlist = latestTracks
+                    val currentIndex = playlist.indexOfFirst { it.id == track.id }
+                    if (currentIndex >= 0 && playlist.size > 1) {
+                        selectedTrack = playlist[(currentIndex + 1) % playlist.size]
+                    } else {
+                        isPlaying = false
+                        playbackPosition = 0L
+                        it.seekTo(0)
+                    }
+                }
+                mediaPlayer.setOnErrorListener { _, _, _ ->
+                    isPlaying = false
+                    playbackError = "Unable to play this track."
+                    true
+                }
+                mediaPlayer.prepareAsync()
+            } catch (_: Exception) {
+                isPlaying = false
+                playbackError = "Unable to play this track."
+            }
+
+            onDispose {
+                mediaPlayer.release()
+            }
+        }
+    }
+
+    LaunchedEffect(player, isPrepared, isPlaying) {
+        val activePlayer = player
+        if (activePlayer != null && isPrepared && isPlaying) {
+            while (true) {
+                if (!isSeeking) playbackPosition = activePlayer.currentPosition.toLong()
+                delay(500)
+            }
+        }
     }
 
     val filteredTracks = tracks.filter {
@@ -124,11 +214,15 @@ private fun MixfiaLibrary() {
         modifier = Modifier.fillMaxSize(),
         color = Color(0xFF101116)
     ) {
-        Column(Modifier.fillMaxSize().padding(18.dp)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 24.dp)
+        ) {
             Text(
                 "MIXFIA",
                 color = Color(0xFF75F0C0),
-                fontSize = 27.sp,
+                fontSize = 28.sp,
                 fontWeight = FontWeight.Black
             )
             Text(
@@ -140,13 +234,13 @@ private fun MixfiaLibrary() {
             Spacer(Modifier.height(22.dp))
 
             Text(
-                "MUSIC LIBRARY",
+                "Music library",
                 color = Color.White,
-                fontSize = 19.sp,
+                fontSize = 22.sp,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                "${tracks.size} tracks found",
+                "${tracks.size} ${if (tracks.size == 1) "track" else "tracks"}",
                 color = Color(0xFF75F0C0),
                 fontSize = 13.sp
             )
@@ -159,6 +253,7 @@ private fun MixfiaLibrary() {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 placeholder = { Text("Search songs or artists") },
+                shape = RoundedCornerShape(10.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = Color.White,
                     unfocusedTextColor = Color.White,
@@ -172,7 +267,7 @@ private fun MixfiaLibrary() {
 
             if (!permissionGranted) {
                 Box(
-                    Modifier.fillMaxSize(),
+                    Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -196,12 +291,12 @@ private fun MixfiaLibrary() {
                 }
             } else if (filteredTracks.isEmpty()) {
                 Box(
-                    Modifier.fillMaxSize(),
+                    Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         if (tracks.isEmpty()) {
-                            "No indexed music found on this device."
+                            "No music found on this device."
                         } else {
                             "No matching tracks."
                         },
@@ -210,17 +305,23 @@ private fun MixfiaLibrary() {
                 }
             } else {
                 LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(filteredTracks, key = { it.id }) { track ->
                         Row(
                             Modifier
                                 .fillMaxWidth()
+                                .clickable { selectedTrack = track }
                                 .background(
-                                    Color(0xFF20222B),
-                                    RoundedCornerShape(12.dp)
+                                    if (selectedTrack?.id == track.id) {
+                                        Color(0xFF29372F)
+                                    } else {
+                                        Color(0xFF20222B)
+                                    },
+                                    RoundedCornerShape(8.dp)
                                 )
-                                .padding(14.dp),
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
@@ -242,6 +343,109 @@ private fun MixfiaLibrary() {
                                 fontSize = 12.sp
                             )
                         }
+                    }
+                }
+            }
+
+            selectedTrack?.let { track ->
+                Spacer(Modifier.height(12.dp))
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF20222B), RoundedCornerShape(10.dp))
+                        .padding(14.dp)
+                ) {
+                    Text(
+                        track.title,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                    Text(
+                        playbackError ?: track.artist,
+                        color = if (playbackError != null) Color(0xFFFF8A80) else Color.LightGray,
+                        fontSize = 12.sp,
+                        maxLines = 1
+                    )
+                    Slider(
+                        value = playbackPosition.coerceIn(0L, playbackDuration.coerceAtLeast(1L)).toFloat(),
+                        onValueChange = {
+                            isSeeking = true
+                            playbackPosition = it.toLong()
+                        },
+                        onValueChangeFinished = {
+                            player?.seekTo(playbackPosition.toInt())
+                            isSeeking = false
+                        },
+                        valueRange = 0f..playbackDuration.coerceAtLeast(1L).toFloat(),
+                        enabled = isPrepared && playbackDuration > 0,
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFF75F0C0),
+                            activeTrackColor = Color(0xFF75F0C0),
+                            inactiveTrackColor = Color.DarkGray
+                        )
+                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            formatDuration(playbackPosition),
+                            color = Color.LightGray,
+                            fontSize = 11.sp
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(
+                                onClick = {
+                                    val index = tracks.indexOfFirst { it.id == track.id }
+                                    if (index >= 0 && tracks.size > 1) {
+                                        selectedTrack = tracks[(index - 1 + tracks.size) % tracks.size]
+                                    }
+                                },
+                                enabled = tracks.size > 1
+                            ) {
+                                Text("PREV", color = Color.LightGray, fontSize = 11.sp)
+                            }
+                            Button(
+                                onClick = {
+                                    val activePlayer = player
+                                    if (activePlayer != null && isPrepared) {
+                                        if (isPlaying) {
+                                            activePlayer.pause()
+                                            isPlaying = false
+                                        } else {
+                                            activePlayer.start()
+                                            isPlaying = true
+                                        }
+                                    }
+                                },
+                                enabled = isPrepared,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF75F0C0),
+                                    contentColor = Color.Black
+                                ),
+                                contentPadding = PaddingValues(horizontal = 20.dp)
+                            ) {
+                                Text(if (isPlaying) "PAUSE" else "PLAY")
+                            }
+                            TextButton(
+                                onClick = {
+                                    val index = tracks.indexOfFirst { it.id == track.id }
+                                    if (index >= 0 && tracks.size > 1) {
+                                        selectedTrack = tracks[(index + 1) % tracks.size]
+                                    }
+                                },
+                                enabled = tracks.size > 1
+                            ) {
+                                Text("NEXT", color = Color.LightGray, fontSize = 11.sp)
+                            }
+                        }
+                        Text(
+                            formatDuration(playbackDuration),
+                            color = Color.LightGray,
+                            fontSize = 11.sp
+                        )
                     }
                 }
             }
