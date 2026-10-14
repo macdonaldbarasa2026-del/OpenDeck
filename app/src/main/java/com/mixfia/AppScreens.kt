@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 
 private enum class MixfiaTab(val label: String, val symbol: String) {
     LIBRARY("Library", "♪"),
+    MIXER("Mix", "◈"),
     EXPLORE("Explore", "⌕"),
     DOWNLOADS("Downloads", "↓"),
     SETTINGS("Settings", "⚙")
@@ -69,6 +70,7 @@ internal fun MixfiaApp() {
             Box(Modifier.fillMaxSize().padding(padding)) {
                 when (selectedTab) {
                     MixfiaTab.LIBRARY -> MixfiaLibrary(rescanToken = rescanToken)
+                    MixfiaTab.MIXER -> DjMixerScreen()
                     MixfiaTab.EXPLORE -> OnlineCatalogScreen(wifiOnly = wifiOnly)
                     MixfiaTab.DOWNLOADS -> DownloadsScreen()
                     MixfiaTab.SETTINGS -> SettingsScreen(

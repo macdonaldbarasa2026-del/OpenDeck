@@ -32,7 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-private data class AudioTrack(
+internal data class AudioTrack(
     val id: Long,
     val title: String,
     val artist: String,
@@ -48,19 +48,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun audioPermission(): String =
+internal fun audioPermission(): String =
     if (Build.VERSION.SDK_INT >= 33) {
         Manifest.permission.READ_MEDIA_AUDIO
     } else {
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
 
-private fun hasAudioPermission(context: Context): Boolean =
+internal fun hasAudioPermission(context: Context): Boolean =
     androidx.core.content.ContextCompat.checkSelfPermission(
         context, audioPermission()
     ) == PackageManager.PERMISSION_GRANTED
 
-private fun scanMusic(context: Context): List<AudioTrack> {
+internal fun scanMusic(context: Context): List<AudioTrack> {
     val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
     val projection = arrayOf(
         MediaStore.Audio.Media._ID,
@@ -97,7 +97,7 @@ private fun scanMusic(context: Context): List<AudioTrack> {
     return tracks
 }
 
-private fun formatDuration(milliseconds: Long): String {
+internal fun formatDuration(milliseconds: Long): String {
     val totalSeconds = milliseconds / 1000
     return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
